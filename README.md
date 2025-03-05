@@ -5,6 +5,7 @@
 - 提供正向思考指導，讓你變得更正向不厭世
   
 ### 流程圖
+![image](https://github.com/user-attachments/assets/f57c1307-7b7e-46cf-af47-4353fd0dd0a8)
 
 
 
