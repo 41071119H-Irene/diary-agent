@@ -10,5 +10,6 @@
 
 
 
-### 參考code
-[AutoGen_project](https://github.com/peculab/autogen_project)
+### 參考
+- [AutoGen_project code](https://github.com/peculab/autogen_project)
+- [正向思考教材](https://github.com/41071119H-Irene/diary-agent/blob/main/%E6%AD%A3%E5%90%91%E6%80%9D%E8%80%83%E7%AF%84%E4%BE%8B.pdf)
