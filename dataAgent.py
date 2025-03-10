@@ -64,6 +64,7 @@ async def main():
         print("請檢查 .env 檔案中的 GEMINI_API_KEY。")
         return
 
+    # 初始化模型用戶端
     model_client = OpenAIChatCompletionClient(
         model="gemini-2.0-flash",
         api_key=gemini_api_key,
