@@ -8,6 +8,7 @@
 ![image](https://github.com/user-attachments/assets/f57c1307-7b7e-46cf-af47-4353fd0dd0a8)
 
 ### User Interface
+![image](https://github.com/user-attachments/assets/f8a814df-b2a2-4c50-bac5-602fcecb77a7)
 
 ### 評核標準
 - 天氣: (待使用)預計讓使用者勾選是否加入天氣加權
