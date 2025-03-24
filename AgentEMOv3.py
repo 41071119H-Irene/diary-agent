@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import io
 
+matplotlib.use('Agg')  # 使用非 GUI 的後端
+
 matplotlib.rc('font', family='Microsoft JhengHei')
 
 # 根據你的專案結構調整下列 import
@@ -16,7 +18,7 @@ from autogen_agentchat.messages import TextMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 load_dotenv()
-semaphore = asyncio.Semaphore(10)  # 限制最大併發數
+semaphore = asyncio.Semaphore(1)  # 限制最大併發數
 
 import os
 
@@ -56,8 +58,9 @@ def generate_mood_trend_plot(user_id, user_entries):
 
     # 存檔至 moodtrend 資料夾
     output_path = os.path.join(output_dir, f"mood_trend_{user_id}.png")
-    plt.savefig(output_path)
-    plt.close()
+    plt.savefig("static/moodtrend/mood_trend.png")
+    plt.close()  # ✅ 這樣就不會開啟 Tkinter GUI
+
 
     return output_path
 

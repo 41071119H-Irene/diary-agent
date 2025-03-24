@@ -177,64 +177,36 @@
     <div class="sidebar">
         <h3>Big 3</h3>
         <ul>
-            <li>項目 1</li>
-            <li>項目 2</li>
-            <li>項目 3</li>
+            <li>{{ big_3_goals[0] }}</li>
+            <li>{{ big_3_goals[1] }}</li>
+            <li>{{ big_3_goals[2] }}</li>
         </ul>
         <h3>建議</h3>
         <ul>
-            <li>項目 1</li>
-            <li>項目 2</li>
-            <li>項目 3</li>
+            <li>{{ recommendations[0] }}</li>
+            <li>{{ recommendations[1] }}</li>
+            <li>{{ recommendations[2] }}</li>
         </ul>
         <h3>情緒走向</h3>
-        <div class="chart"></div>
-    </div>
+        <img id="moodTrendImg" src="" alt="心情走向圖" style="width:100%;border-radius:8px;">
+        <script>
+            document.addEventListener("DOMContentLoaded", function () {
+                fetch("/get_recommendations")
+                    .then(response => response.json())
+                    .then(data => {
+                        document.querySelector(".sidebar ul:nth-of-type(1) li:nth-child(1)").textContent = data.big_3_goals[0];
+                        document.querySelector(".sidebar ul:nth-of-type(1) li:nth-child(2)").textContent = data.big_3_goals[1];
+                        document.querySelector(".sidebar ul:nth-of-type(1) li:nth-child(3)").textContent = data.big_3_goals[2];
 
-    <div class="chat-container">
-        <h2>對話紀錄</h2>
-        <div class="chat-box" id="chatBox">
-            <div class="message bot-message">你好！請輸入您的問題。</div>
-        </div>
-        <div class="input-box">
-            <input type="text" id="userInput" placeholder="輸入訊息...">
-            <button onclick="sendMessage()">發送</button>
-        </div>
-    </div>
+                        document.querySelector(".sidebar ul:nth-of-type(2) li:nth-child(1)").textContent = data.recommendations[0];
+                        document.querySelector(".sidebar ul:nth-of-type(2) li:nth-child(2)").textContent = data.recommendations[1];
+                        document.querySelector(".sidebar ul:nth-of-type(2) li:nth-child(3)").textContent = data.recommendations[2];
 
-    <script>
-        function sendMessage() {
-            let inputField = document.getElementById("userInput");
-            let chatBox = document.getElementById("chatBox");
-            let message = inputField.value.trim();
-
-            if (message === "") return;
-
-            // 新增使用者訊息
-            let userMsg = document.createElement("div");
-            userMsg.classList.add("message", "user-message");
-            userMsg.textContent = message;
-            chatBox.appendChild(userMsg);
-            inputField.value = "";
-
-            // 向後端發送請求
-            fetch("/chat", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ message: message })
-            })
-            .then(response => response.json())
-            .then(data => {
-                let botMsg = document.createElement("div");
-                botMsg.classList.add("message", "bot-message");
-                botMsg.textContent = data.reply;
-                chatBox.appendChild(botMsg);
-                chatBox.scrollTop = chatBox.scrollHeight;
-            })
-            .catch(error => console.error("錯誤:", error));
-        }
-    </script>
+                        let userId = "12345"; // 假設用戶ID
+                        document.getElementById("moodTrendImg").src = `/get_mood_trend/${userId}`;
+                    })
+                    .catch(error => console.error("載入建議時發生錯誤:", error));
+            });
+        </script>
 </body>
 </html>
