@@ -14,6 +14,13 @@
 - 天氣: (待使用)預計讓使用者勾選是否加入天氣加權
 - 心情指數: 0-10 (10為心情最好、0為心情最差)
 - 心情小語: 透過 SnowNLP 套件做情緒分析，輔助正向諮詢
+
+### Mildstone
+- 2/17 主題發想
+- 2/24 具體流程圖
+- 3/3～3/10 後端邏輯製作完成
+- 3/17 前端頁面完成
+- 3/24～4/7 左半邊前後端串聯
 ### 參考
 - [AutoGen_project code](https://github.com/peculab/autogen_project)
 - [正向思考教材](https://github.com/41071119H-Irene/diary-agent/blob/main/%E6%AD%A3%E5%90%91%E6%80%9D%E8%80%83%E7%AF%84%E4%BE%8B.pdf)
