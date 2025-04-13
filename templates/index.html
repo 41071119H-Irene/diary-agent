@@ -4,24 +4,54 @@
     <meta charset="UTF-8" />
     <title>情緒日記分析系統</title>
     <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        .container {
+            display: flex;
+        }
+        .left, .right {
+            width: 50%;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #chat-box {
+            border: 1px solid #ccc;
+            height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+            background: #f9f9f9;
+        }
+    </style>
 </head>
 <body>
-    <h1>📂 上傳日誌</h1>
-    <form id="upload-form" enctype="multipart/form-data">
-        <input type="file" name="file" required />
-        <button type="submit">上傳並分析</button>
-    </form>
+    <div class="container">
+        <!-- 左邊：原本內容 -->
+        <div class="left">
+            <h1>📂 上傳日誌</h1>
+            <form id="upload-form" enctype="multipart/form-data">
+                <input type="file" name="file" required />
+                <button type="submit">上傳並分析</button>
+            </form>
 
-    <h2>📊 情緒走向</h2>
-    <div id="plot">
-        <img id="mood-trend" src="" alt="心情趨勢圖將顯示於此" style="width: 100%; display: none;" />
+            <h2>📊 情緒走向</h2>
+            <div id="plot">
+                <img id="mood-trend" src="" alt="心情趨勢圖將顯示於此" style="width: 100%; display: none;" />
+            </div>
+
+            <h2>🧩 即時分析進度</h2>
+            <div id="progress"></div>
+
+            <h2>💡 建議</h2>
+            <div id="suggestions"></div>
+        </div>
+
+        <!-- 右邊：與 AI 對話 -->
+        <div class="right">
+            <h2>🤖 與機器人對話</h2>
+            <div id="chat-box"></div>
+            <input type="text" id="chat-input" placeholder="輸入訊息..." style="width: 80%;" />
+            <button onclick="sendMessage()">送出</button>
+        </div>
     </div>
-
-    <h2>🧩 即時分析進度</h2>
-    <div id="progress"></div>
-
-    <h2>💡 建議</h2>
-    <div id="suggestions"></div>
 
     <script>
         const socket = io();
@@ -49,6 +79,27 @@
 
         socket.on('suggestions', function (data) {
             suggestions.innerHTML = `<pre>${data.suggestions}</pre>`;
+        });
+
+        // 🔸 聊天功能
+        function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (message !== '') {
+                appendChat(`🧑 你：${message}`);
+                socket.emit('user_message', { message });
+                input.value = '';
+            }
+        }
+
+        function appendChat(msg) {
+            const chatBox = document.getElementById('chat-box');
+            chatBox.innerHTML += `<p>${msg}</p>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        socket.on('bot_reply', function (data) {
+            appendChat(data.message);
         });
     </script>
 </body>
