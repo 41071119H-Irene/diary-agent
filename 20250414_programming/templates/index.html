@@ -86,7 +86,7 @@
             const input = document.getElementById('chat-input');
             const message = input.value.trim();
             if (message !== '') {
-                appendChat(`🧑 你：${message}`);
+                appendChat(`🧑：${message}`);
                 socket.emit('user_message', { message });
                 input.value = '';
             }

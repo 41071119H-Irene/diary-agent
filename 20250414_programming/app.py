@@ -2,16 +2,18 @@ import os
 import threading
 import asyncio
 import pandas as pd
-from flask import Flask, render_template, request
+from flask_cors import CORS
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
 from EMOwithSnow import generate_mood_trend_plot
 from multiagent import run_multiagent_analysis
-from chatbot import generate_chat_response  # ✅ 匯入 Gemini 回應功能
+from chatbot import main  # ✅ 匯入 Gemini 回應功能
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 socketio = SocketIO(app, async_mode='threading')
+CORS(app)
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -45,12 +47,19 @@ def upload_file():
         thread.start()
         return 'File uploaded and processing started.', 200
 
-# 🔸 AI 對話功能
-@socketio.on('user_message')
-def handle_user_message(data):
-    user_msg = data['message']
-    response = generate_chat_response(user_msg)  # ✅ 呼叫 Gemini 模型取得回應
-    socketio.emit('bot_reply', {'message': f"🤖 機器人回覆：{response}"})
+# 提供 /chat API
+@app.route("/main", methods=["POST"])
+def chat():
+    data = request.get_json()
+    prompt = data.get("message", "")
+    if not prompt:
+        return jsonify({"error": "No message provided"}), 400
+
+    try:
+        response = asyncio.run(main(prompt))
+        return jsonify({"response": response})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
