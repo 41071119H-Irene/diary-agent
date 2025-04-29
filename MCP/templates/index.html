@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 情緒分析系統</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+        }
+        .upload-box {
+            padding: 10px;
+            border-bottom: 1px solid #ccc;
+            background-color: #f9f9f9;
+        }
+        .main-container {
+            display: flex;
+            flex: 1;
+            flex-direction: row;
+            overflow: hidden;
+        }
+        .left-panel, .right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        .top-box, .bottom-box {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+            padding: 10px;
+        }
+        h3 {
+            margin-top: 0px;
+            margin-bottom: 0px;
+        }
+        #mood-trend-img {
+            width: 100%;
+            object-fit: contain; /* 圖片自適應 */
+            display: none;
+        }
+        #chat-input-box {
+            display: flex;
+            margin-top: 10px;
+        }
+        #chat-input {
+            flex: 1;
+            padding: 5px;
+        }
+        #send-button {
+            padding: 5px 10px;
+        }
+        .thinking {
+            font-style: italic;
+            color: gray;
+        }
+        .card {
+            background-color: #f9f9f9;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+<div class="upload-box">
+    <form id="upload-form" enctype="multipart/form-data">
+        <label for="file">📤 上傳 CSV：</label>
+        <input type="file" name="file" id="file" accept=".csv">
+        <label style="margin-left: 20px;">
+            <input type="checkbox" id="is-counselor" name="is_counselor">
+            我是學校輔導老師
+        </label>
+        <button type="submit" style="margin-left: 20px;">開始分析</button>
+    </form>
+</div>
+
+<div class="main-container">
+    <div class="left-panel">
+        <div class="top-box">
+            <h3>📊 心情趨勢圖</h3>
+            <img id="mood-trend-img" src="" alt="心情趨勢圖">
+        </div>
+        <div class="bottom-box" id="analysis-log">
+            <h3>🧩 即時分析進度</h3>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <div class="right-panel">
+        <div class="top-box">
+            <h3>💬 與 AI 對話</h3>
+            <div id="chat-log"></div>
+            <div id="chat-input-box">
+                <textarea id="chat-input" placeholder="輸入訊息..." rows="2" style="flex: 1; padding: 5px; overflow-y: hidden;"></textarea>
+                <button id="send-button">送出</button>
+            </div>
+        </div>
+
+        <div class="bottom-box" id="ai-suggestions">
+            <h3>💡 AI 建議</h3>
+
+            <div id="summary-card" class="card">
+                <h4>📝 分析摘要</h4>
+                <p id="summary-text">（等待分析中...）</p>
+            </div>
+
+            <div id="material-card" class="card">
+                <h4>📚 推薦教材</h4>
+                <p id="material-text">（等待推薦中...）</p>
+            </div>
+
+            <div id="therapy-section" style="display: none;">
+                <div id="therapy-card" class="card">
+                    <h4>🩺 建議輔導方法</h4>
+                    <p id="therapy-text">（等待建議中...）</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+
+    socket.on('plot_generated', function (data) {
+        $('#mood-trend-img')
+            .attr('src', data.plot_url + '?t=' + Date.now())
+            .show();
+    });
+
+    socket.on('update', function (data) {
+        let target = data.tag === 'analysis' ? '#log' : '#chat-log';
+        if (data.thinking) {
+            $(`<p id="thinking-${data.agent}" class="thinking">🤖 [${data.agent}] 正在思考中...</p>`).appendTo(target);
+        } else {
+            $(`#thinking-${data.agent}`).remove();
+            // const display = `<p><strong>${data.message}</strong></p>`;
+            const display = `<p style="font-size: 13px; font-weight: normal;">${data.message}</p>`;
+            $(target).append(display);
+            $(target).scrollTop($(target)[0].scrollHeight);
+        }
+    });
+
+    socket.on('ai_reply', function (data) {
+        const display = `<p><strong>🤖 機器人：</strong> ${data.message}</p>`;
+        $('#chat-log').append(display);
+        $('#chat-log').scrollTop($('#chat-log')[0].scrollHeight);
+    });
+
+    socket.on('suggestions', function (data) {
+        const fullText = data.suggestions;
+
+        let summary = fullText;
+        let material = "";
+        let therapy = "";
+
+        if (fullText.includes("📚")) {
+            [summary, material] = fullText.split("📚");
+        }
+        if (material.includes("🩺")) {
+            [material, therapy] = material.split("🩺");
+        }
+
+        // ✨ 把 summary 裡所有列點符號 (•、-、*) 都換成新的一行
+        const formattedSummary = summary.trim()
+            .replace(/([•\-*])\s*/g, '<br>• '); 
+            // 任何「•」、「-」、「*」後面接空格，一律換成新的 • 點加空格
+
+        $('#summary-text').html(formattedSummary);
+        $('#material-text').text(material.trim());
+
+        if (therapy.trim()) {
+            $('#therapy-section').show();
+            $('#therapy-text').text(therapy.trim());
+        } else {
+            $('#therapy-section').hide();
+        }
+
+        // 自動捲動到 AI 建議區
+        $('html, body').animate({
+            scrollTop: $('#ai-suggestions').offset().top
+        }, 600);
+    });
+
+
+
+        $('#upload-form').submit(function (e) {
+            e.preventDefault();
+            const formData = new FormData();
+            const fileInput = $('#file')[0];
+            if (fileInput.files.length === 0) return;
+
+            formData.append('file', fileInput.files[0]);
+            const isCounselor = $('#is-counselor').is(':checked');
+            formData.append('is_counselor', isCounselor);
+
+            $.ajax({
+                url: '/upload',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function () {
+                    $('#log').append('<p>🟢 檔案上傳成功，開始分析中...</p>');
+                },
+                error: function () {
+                    $('#log').append('<p>❌ 上傳失敗</p>');
+                }
+            });
+    });
+
+    $('#send-button').click(function () {
+        const message = $('#chat-input').val();
+        if (message.trim() === '') return;
+        socket.emit('chat_message', { message: message });
+        $('#chat-log').append(`<p><strong>🧑 你：</strong> ${message}</p>`);
+        $('#chat-input').val('');
+    });
+
+    $('#chat-input').on('input', function () {
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+    });
+
+    $('#chat-input').keydown(function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            $('#send-button').click();
+        }
+    });
+</script>
+
+</body>
+</html>
