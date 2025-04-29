@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 情緒分析系統</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+        }
+        .upload-box {
+            padding: 10px;
+            border-bottom: 1px solid #ccc;
+            background-color: #f9f9f9;
+        }
+        .main-container {
+            display: flex;
+            flex: 1;
+            flex-direction: row;
+            overflow: hidden;
+        }
+        .left-panel, .right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        .top-box, .bottom-box {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+            padding: 10px;
+        }
+        #mood-trend-img {
+            width: 100%;
+            display: none;
+        }
+        #suggestion-box {
+            white-space: pre-wrap;
+        }
+        #chat-input-box {
+            display: flex;
+            margin-top: 10px;
+        }
+        #chat-input {
+            flex: 1;
+            padding: 5px;
+        }
+        #send-button {
+            padding: 5px 10px;
+        }
+        .thinking {
+            font-style: italic;
+            color: gray;
+        }
+    </style>
+</head>
+<body>
+<div class="upload-box">
+    <form id="upload-form" enctype="multipart/form-data">
+        <label for="file">📤 上傳 CSV：</label>
+        <input type="file" name="file" id="file" accept=".csv">
+        <button type="submit">開始分析</button>
+    </form>
+</div>
+<div class="main-container">
+    <div class="left-panel">
+        <div class="top-box">
+            <h3>📊 心情趨勢圖</h3>
+            <img id="mood-trend-img" src="" alt="心情趨勢圖">
+        </div>
+        <div class="bottom-box" id="analysis-log">
+            <h3>🧩 即時分析進度</h3>
+            <div id="log"></div>
+        </div>
+    </div>
+    <div class="right-panel">
+        <div class="top-box">
+            <h3>💬 與 AI 對話</h3>
+            <div id="chat-log"></div>
+            <div id="chat-input-box">
+                <input type="text" id="chat-input" placeholder="輸入訊息...">
+                <button id="send-button">送出</button>
+            </div>
+        </div>
+        <div class="bottom-box">
+            <h3>💡 AI 建議</h3>
+            <div id="suggestion-box"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+
+    socket.on('plot_generated', function (data) {
+        $('#mood-trend-img')
+            .attr('src', data.plot_url + '?t=' + Date.now())
+            .show();
+    });
+
+    socket.on('update', function (data) {
+        let target = data.tag === 'analysis' ? '#log' : '#chat-log';
+        if (data.thinking) {
+            $(`<p id="thinking-${data.agent}" class="thinking">🤖 [${data.agent}] 正在思考中...</p>`).appendTo(target);
+        } else {
+            $(`#thinking-${data.agent}`).remove();
+            const display = `<p><strong>🤖 [${data.agent}]：</strong> ${data.message}</p>`;
+            $(target).append(display);
+            $(target).scrollTop($(target)[0].scrollHeight);
+        }
+    });
+
+    socket.on('ai_reply', function (data) {
+        const display = `<p><strong>🤖 Gemini：</strong> ${data.message}</p>`;
+        $('#chat-log').append(display);
+        $('#chat-log').scrollTop($('#chat-log')[0].scrollHeight);
+    });
+
+    socket.on('suggestions', function (data) {
+        $('#suggestion-box').html('<strong>最終建議：</strong><br>' + data.suggestions);
+    });
+
+    $('#upload-form').submit(function (e) {
+        e.preventDefault();
+        const formData = new FormData();
+        const fileInput = $('#file')[0];
+        if (fileInput.files.length === 0) return;
+        formData.append('file', fileInput.files[0]);
+
+        $.ajax({
+            url: '/upload',
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function () {
+                $('#log').append('<p>🟢 檔案上傳成功，開始分析中...</p>');
+            },
+            error: function () {
+                $('#log').append('<p>❌ 上傳失敗</p>');
+            }
+        });
+    });
+
+    $('#send-button').click(function () {
+        const message = $('#chat-input').val();
+        if (message.trim() === '') return;
+        socket.emit('chat_message', { message: message });
+        $('#chat-log').append(`<p><strong>🧑‍💻 你：</strong> ${message}</p>`);
+        $('#chat-input').val('');
+    });
+</script>
+</body>
+</html>
