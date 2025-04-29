@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import re
-from typing import Any, Callable, Dict, List, Mapping, Sequence
+from inspect import iscoroutinefunction
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Union, cast
 
-from autogen_core import Component, ComponentModel
+from autogen_core import AgentRuntime, Component, ComponentModel
 from autogen_core.models import AssistantMessage, ChatCompletionClient, ModelFamily, SystemMessage, UserMessage
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -11,16 +13,24 @@ from ... import TRACE_LOGGER_NAME
 from ...agents import BaseChatAgent
 from ...base import ChatAgent, TerminationCondition
 from ...messages import (
-    AgentEvent,
     BaseAgentEvent,
-    ChatMessage,
-    MultiModalMessage,
+    BaseChatMessage,
+    MessageFactory,
 )
 from ...state import SelectorManagerState
 from ._base_group_chat import BaseGroupChat
 from ._base_group_chat_manager import BaseGroupChatManager
+from ._events import GroupChatTermination
 
 trace_logger = logging.getLogger(TRACE_LOGGER_NAME)
+
+SyncSelectorFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], str | None]
+AsyncSelectorFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awaitable[str | None]]
+SelectorFuncType = Union[SyncSelectorFunc | AsyncSelectorFunc]
+
+SyncCandidateFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], List[str]]
+AsyncCandidateFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awaitable[List[str]]]
+CandidateFuncType = Union[SyncCandidateFunc | AsyncCandidateFunc]
 
 
 class SelectorGroupChatManager(BaseGroupChatManager):
@@ -29,34 +39,48 @@ class SelectorGroupChatManager(BaseGroupChatManager):
 
     def __init__(
         self,
+        name: str,
         group_topic_type: str,
         output_topic_type: str,
         participant_topic_types: List[str],
+        participant_names: List[str],
         participant_descriptions: List[str],
+        output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
+        message_factory: MessageFactory,
         model_client: ChatCompletionClient,
         selector_prompt: str,
         allow_repeated_speaker: bool,
-        selector_func: Callable[[Sequence[AgentEvent | ChatMessage]], str | None] | None,
+        selector_func: Optional[SelectorFuncType],
         max_selector_attempts: int,
+        candidate_func: Optional[CandidateFuncType],
+        emit_team_events: bool,
     ) -> None:
         super().__init__(
+            name,
             group_topic_type,
             output_topic_type,
             participant_topic_types,
+            participant_names,
             participant_descriptions,
+            output_message_queue,
             termination_condition,
             max_turns,
+            message_factory,
+            emit_team_events,
         )
         self._model_client = model_client
         self._selector_prompt = selector_prompt
         self._previous_speaker: str | None = None
         self._allow_repeated_speaker = allow_repeated_speaker
         self._selector_func = selector_func
+        self._is_selector_func_async = iscoroutinefunction(self._selector_func)
         self._max_selector_attempts = max_selector_attempts
+        self._candidate_func = candidate_func
+        self._is_candidate_func_async = iscoroutinefunction(self._candidate_func)
 
-    async def validate_group_state(self, messages: List[ChatMessage] | None) -> None:
+    async def validate_group_state(self, messages: List[BaseChatMessage] | None) -> None:
         pass
 
     async def reset(self) -> None:
@@ -68,7 +92,7 @@ class SelectorGroupChatManager(BaseGroupChatManager):
 
     async def save_state(self) -> Mapping[str, Any]:
         state = SelectorManagerState(
-            message_thread=list(self._message_thread),
+            message_thread=[msg.dump() for msg in self._message_thread],
             current_turn=self._current_turn,
             previous_speaker=self._previous_speaker,
         )
@@ -76,11 +100,11 @@ class SelectorGroupChatManager(BaseGroupChatManager):
 
     async def load_state(self, state: Mapping[str, Any]) -> None:
         selector_state = SelectorManagerState.model_validate(state)
-        self._message_thread = list(selector_state.message_thread)
+        self._message_thread = [self._message_factory.create(msg) for msg in selector_state.message_thread]
         self._current_turn = selector_state.current_turn
         self._previous_speaker = selector_state.previous_speaker
 
-    async def select_speaker(self, thread: List[AgentEvent | ChatMessage]) -> str:
+    async def select_speaker(self, thread: List[BaseAgentEvent | BaseChatMessage]) -> str:
         """Selects the next speaker in a group chat using a ChatCompletion client,
         with the selector function as override if it returns a speaker name.
 
@@ -89,47 +113,63 @@ class SelectorGroupChatManager(BaseGroupChatManager):
 
         # Use the selector function if provided.
         if self._selector_func is not None:
-            speaker = self._selector_func(thread)
+            if self._is_selector_func_async:
+                async_selector_func = cast(AsyncSelectorFunc, self._selector_func)
+                speaker = await async_selector_func(thread)
+            else:
+                sync_selector_func = cast(SyncSelectorFunc, self._selector_func)
+                speaker = sync_selector_func(thread)
             if speaker is not None:
+                if speaker not in self._participant_names:
+                    raise ValueError(
+                        f"Selector function returned an invalid speaker name: {speaker}. "
+                        f"Expected one of: {self._participant_names}."
+                    )
                 # Skip the model based selection.
                 return speaker
+
+        # Use the candidate function to filter participants if provided
+        if self._candidate_func is not None:
+            if self._is_candidate_func_async:
+                async_candidate_func = cast(AsyncCandidateFunc, self._candidate_func)
+                participants = await async_candidate_func(thread)
+            else:
+                sync_candidate_func = cast(SyncCandidateFunc, self._candidate_func)
+                participants = sync_candidate_func(thread)
+            if not participants:
+                raise ValueError("Candidate function must return a non-empty list of participant names.")
+            if not all(p in self._participant_names for p in participants):
+                raise ValueError(
+                    f"Candidate function returned invalid participant names: {participants}. "
+                    f"Expected one of: {self._participant_names}."
+                )
+        else:
+            # Construct the candidate agent list to be selected from, skip the previous speaker if not allowed.
+            if self._previous_speaker is not None and not self._allow_repeated_speaker:
+                participants = [p for p in self._participant_names if p != self._previous_speaker]
+            else:
+                participants = list(self._participant_names)
+
+        assert len(participants) > 0
 
         # Construct the history of the conversation.
         history_messages: List[str] = []
         for msg in thread:
-            if isinstance(msg, BaseAgentEvent):
-                # Ignore agent events.
+            if not isinstance(msg, BaseChatMessage):
+                # Only process chat messages.
                 continue
-            # The agent type must be the same as the topic type, which we use as the agent name.
-            message = f"{msg.source}:"
-            if isinstance(msg.content, str):
-                message += f" {msg.content}"
-            elif isinstance(msg, MultiModalMessage):
-                for item in msg.content:
-                    if isinstance(item, str):
-                        message += f" {item}"
-                    else:
-                        message += " [Image]"
-            else:
-                raise ValueError(f"Unexpected message type in selector: {type(msg)}")
+            message = f"{msg.source}: {msg.to_model_text()}"
             history_messages.append(
                 message.rstrip() + "\n\n"
             )  # Create some consistency for how messages are separated in the transcript
         history = "\n".join(history_messages)
 
-        # Construct agent roles, we are using the participant topic type as the agent name.
+        # Construct agent roles.
         # Each agent sould appear on a single line.
         roles = ""
-        for topic_type, description in zip(self._participant_topic_types, self._participant_descriptions, strict=True):
+        for topic_type, description in zip(self._participant_names, self._participant_descriptions, strict=True):
             roles += re.sub(r"\s+", " ", f"{topic_type}: {description}").strip() + "\n"
         roles = roles.strip()
-
-        # Construct agent list to be selected, skip the previous speaker if not allowed.
-        if self._previous_speaker is not None and not self._allow_repeated_speaker:
-            participants = [p for p in self._participant_topic_types if p != self._previous_speaker]
-        else:
-            participants = self._participant_topic_types
-        assert len(participants) > 0
 
         # Select the next speaker.
         if len(participants) > 1:
@@ -157,7 +197,9 @@ class SelectorGroupChatManager(BaseGroupChatManager):
             response = await self._model_client.create(messages=select_speaker_messages)
             assert isinstance(response.content, str)
             select_speaker_messages.append(AssistantMessage(content=response.content, source="selector"))
-            mentions = self._mentioned_agents(response.content, self._participant_topic_types)
+            # NOTE: we use all participant names to check for mentions, even if the previous speaker is not allowed.
+            # This is because the model may still select the previous speaker, and we want to catch that.
+            mentions = self._mentioned_agents(response.content, self._participant_names)
             if len(mentions) == 0:
                 trace_logger.debug(f"Model failed to select a valid name: {response.content} (attempt {num_attempts})")
                 feedback = f"No valid name was mentioned. Please select from: {str(participants)}."
@@ -238,6 +280,7 @@ class SelectorGroupChatConfig(BaseModel):
     allow_repeated_speaker: bool
     # selector_func: ComponentModel | None
     max_selector_attempts: int = 3
+    emit_team_events: bool = False
 
 
 class SelectorGroupChat(BaseGroupChat, Component[SelectorGroupChatConfig]):
@@ -259,11 +302,15 @@ class SelectorGroupChat(BaseGroupChat, Component[SelectorGroupChatConfig]):
         max_selector_attempts (int, optional): The maximum number of attempts to select a speaker using the model. Defaults to 3.
             If the model fails to select a speaker after the maximum number of attempts, the previous speaker will be used if available,
             otherwise the first participant will be used.
-        selector_func (Callable[[Sequence[AgentEvent | ChatMessage]], str | None], optional): A custom selector
+        selector_func (Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], str | None], Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awaitable[str | None]], optional): A custom selector
             function that takes the conversation history and returns the name of the next speaker.
             If provided, this function will be used to override the model to select the next speaker.
             If the function returns None, the model will be used to select the next speaker.
-
+        candidate_func (Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], List[str]], Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awaitable[List[str]]], optional):
+            A custom function that takes the conversation history and returns a filtered list of candidates for the next speaker
+            selection using model. If the function returns an empty list or `None`, `SelectorGroupChat` will raise a `ValueError`.
+            This function is only used if `selector_func` is not set. The `allow_repeated_speaker` will be ignored if set.
+        emit_team_events (bool, optional): Whether to emit team events through :meth:`BaseGroupChat.run_stream`. Defaults to False.
 
     Raises:
         ValueError: If the number of participants is less than two or if the selector prompt is invalid.
@@ -334,7 +381,7 @@ class SelectorGroupChat(BaseGroupChat, Component[SelectorGroupChatConfig]):
             from autogen_agentchat.teams import SelectorGroupChat
             from autogen_agentchat.conditions import TextMentionTermination
             from autogen_agentchat.ui import Console
-            from autogen_agentchat.messages import AgentEvent, ChatMessage
+            from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
 
 
             async def main() -> None:
@@ -360,8 +407,8 @@ class SelectorGroupChat(BaseGroupChat, Component[SelectorGroupChatConfig]):
                     system_message="Check the answer and respond with 'Correct!' or 'Incorrect!'",
                 )
 
-                def selector_func(messages: Sequence[AgentEvent | ChatMessage]) -> str | None:
-                    if len(messages) == 1 or messages[-1].content == "Incorrect!":
+                def selector_func(messages: Sequence[BaseAgentEvent | BaseChatMessage]) -> str | None:
+                    if len(messages) == 1 or messages[-1].to_text() == "Incorrect!":
                         return "Agent1"
                     if messages[-1].source == "Agent1":
                         return "Agent2"
@@ -391,6 +438,7 @@ class SelectorGroupChat(BaseGroupChat, Component[SelectorGroupChatConfig]):
         *,
         termination_condition: TerminationCondition | None = None,
         max_turns: int | None = None,
+        runtime: AgentRuntime | None = None,
         selector_prompt: str = """You are in a role play game. The following roles are available:
 {roles}.
 Read the following conversation. Then select the next role from {participants} to play. Only return the role.
@@ -401,13 +449,20 @@ Read the above conversation. Then select the next role from {participants} to pl
 """,
         allow_repeated_speaker: bool = False,
         max_selector_attempts: int = 3,
-        selector_func: Callable[[Sequence[AgentEvent | ChatMessage]], str | None] | None = None,
+        selector_func: Optional[SelectorFuncType] = None,
+        candidate_func: Optional[CandidateFuncType] = None,
+        custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]] | None = None,
+        emit_team_events: bool = False,
     ):
         super().__init__(
             participants,
+            group_chat_manager_name="SelectorGroupChatManager",
             group_chat_manager_class=SelectorGroupChatManager,
             termination_condition=termination_condition,
             max_turns=max_turns,
+            runtime=runtime,
+            custom_message_types=custom_message_types,
+            emit_team_events=emit_team_events,
         )
         # Validate the participants.
         if len(participants) < 2:
@@ -417,28 +472,39 @@ Read the above conversation. Then select the next role from {participants} to pl
         self._allow_repeated_speaker = allow_repeated_speaker
         self._selector_func = selector_func
         self._max_selector_attempts = max_selector_attempts
+        self._candidate_func = candidate_func
 
     def _create_group_chat_manager_factory(
         self,
+        name: str,
         group_topic_type: str,
         output_topic_type: str,
         participant_topic_types: List[str],
+        participant_names: List[str],
         participant_descriptions: List[str],
+        output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
+        message_factory: MessageFactory,
     ) -> Callable[[], BaseGroupChatManager]:
         return lambda: SelectorGroupChatManager(
+            name,
             group_topic_type,
             output_topic_type,
             participant_topic_types,
+            participant_names,
             participant_descriptions,
+            output_message_queue,
             termination_condition,
             max_turns,
+            message_factory,
             self._model_client,
             self._selector_prompt,
             self._allow_repeated_speaker,
             self._selector_func,
             self._max_selector_attempts,
+            self._candidate_func,
+            self._emit_team_events,
         )
 
     def _to_config(self) -> SelectorGroupChatConfig:
@@ -451,6 +517,7 @@ Read the above conversation. Then select the next role from {participants} to pl
             allow_repeated_speaker=self._allow_repeated_speaker,
             max_selector_attempts=self._max_selector_attempts,
             # selector_func=self._selector_func.dump_component() if self._selector_func else None,
+            emit_team_events=self._emit_team_events,
         )
 
     @classmethod
@@ -465,7 +532,8 @@ Read the above conversation. Then select the next role from {participants} to pl
             selector_prompt=config.selector_prompt,
             allow_repeated_speaker=config.allow_repeated_speaker,
             max_selector_attempts=config.max_selector_attempts,
-            # selector_func=ComponentLoader.load_component(config.selector_func, Callable[[Sequence[AgentEvent | ChatMessage]], str | None])
+            # selector_func=ComponentLoader.load_component(config.selector_func, Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], str | None])
             # if config.selector_func
             # else None,
+            emit_team_events=config.emit_team_events,
         )
