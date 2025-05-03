@@ -76,6 +76,9 @@
 
 <div class="upload-box">
     <form id="upload-form" enctype="multipart/form-data">
+        <label for="api-key">🔑 輸入你的 Gemini API KEY：</label>
+        <input type="text" id="api-key" name="api_key" placeholder="sk-xxxxxxxx..." style="width: 300px;">
+        <br>
         <label for="file">📤 上傳 CSV：</label>
         <input type="file" name="file" id="file" accept=".csv">
         <label style="margin-left: 20px;">
@@ -197,29 +200,37 @@
 
 
 
-        $('#upload-form').submit(function (e) {
-            e.preventDefault();
-            const formData = new FormData();
-            const fileInput = $('#file')[0];
-            if (fileInput.files.length === 0) return;
+    $('#upload-form').submit(function (e) {
+        e.preventDefault();  // ✅ 第一行就防止預設送出行為
+        const formData = new FormData(); // ✅ 提早定義
 
-            formData.append('file', fileInput.files[0]);
-            const isCounselor = $('#is-counselor').is(':checked');
-            formData.append('is_counselor', isCounselor);
+        const apiKey = $('#api-key').val().trim();
+        if (apiKey) {
+            formData.append('api_key', apiKey);
+        } else {
+            alert('⚠️ 未輸入 API KEY，將使用系統預設金鑰');
+        }
 
-            $.ajax({
-                url: '/upload',
-                type: 'POST',
-                data: formData,
-                processData: false,
-                contentType: false,
-                success: function () {
-                    $('#log').append('<p>🟢 檔案上傳成功，開始分析中...</p>');
-                },
-                error: function () {
-                    $('#log').append('<p>❌ 上傳失敗</p>');
-                }
-            });
+        const fileInput = $('#file')[0];
+        if (fileInput.files.length === 0) return;
+
+        formData.append('file', fileInput.files[0]);
+        const isCounselor = $('#is-counselor').is(':checked');
+        formData.append('is_counselor', isCounselor);
+
+        $.ajax({
+            url: '/upload',
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function () {
+                $('#log').append('<p>🟢 檔案上傳成功，開始分析中...</p>');
+            },
+            error: function () {
+                $('#log').append('<p>❌ 上傳失敗</p>');
+            }
+        });
     });
 
     $('#send-button').click(function () {

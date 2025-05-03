@@ -6,8 +6,8 @@ from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 from werkzeug.utils import secure_filename
-from EMOwithSnow import generate_mood_trend_plot
-from multiagent import run_multiagent_analysis
+from old.EMOwithSnowv2 import generate_mood_trend_plot
+from old.multiagentv2 import run_multiagent_analysis
 from chatbot import main  # ✅ 匯入 Gemini 回應功能
 
 app = Flask(__name__)

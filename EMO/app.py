@@ -11,7 +11,7 @@ from google import genai
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.messages import TextMessage
-from EMOwithSnow import generate_mood_trend_plot
+from old.EMOwithSnowv2 import generate_mood_trend_plot
 
 # ✅ 初始化 Flask 與 SocketIO
 app = Flask(__name__)
@@ -59,7 +59,7 @@ class GeminiChatCompletionClient:
 model_client = GeminiChatCompletionClient()
 
 # ✅ 多 Agent 分析（保留原來程式碼）
-from multiagent import run_multiagent_analysis
+from old.multiagentv2 import run_multiagent_analysis
 
 # ✅ Flask 路由
 @app.route('/')
