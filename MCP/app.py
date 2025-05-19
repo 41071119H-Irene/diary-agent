@@ -1,6 +1,5 @@
 import os
 import asyncio
-import json
 import threading
 import pandas as pd
 from dotenv import load_dotenv, find_dotenv
@@ -53,7 +52,7 @@ def upload_file():
         threading.Thread(target=background_task, args=(file_path, is_counselor, api_key)).start()
         return 'File uploaded and processing started.', 200
 
-# ✅ 背景分析任務
+# ✅ 背景分析任務：產生走勢圖並執行多 Agent 分析
 def background_task(file_path, is_counselor, api_key):
     try:
         df = pd.read_csv(file_path)

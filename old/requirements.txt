@@ -1,6 +1,0 @@
-flask
-pandas
-matplotlib
-python-dotenv
-autogen-agentchat
-autogen-ext

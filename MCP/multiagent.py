@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import pandas as pd
 from flask_socketio import SocketIO
 
@@ -7,6 +8,7 @@ from mcp import ModelClient, ProtocolAgent
 from materials import 推薦教材根據心情分數, 可選輔導方法
 
 async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataFrame, is_counselor: bool):
+    # 🧠 2-1. 初始化模型與代理
     model_client = ModelClient()
 
     analysis_agent = ProtocolAgent(
@@ -25,13 +27,14 @@ async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataF
         "ai_coach": "AI 教練"
     }
 
+    # 📊 2-2. 預處理日記資料與推薦教材
     records = user_entries.to_dict(orient='records')
     if len(records) > 5:
         prompt_records = json.dumps(records[:5], ensure_ascii=False, indent=2, default=str) + "\n... (以下省略)"
     else:
         prompt_records = json.dumps(records, ensure_ascii=False, indent=2, default=str)
 
-    # ✅ 先計算心情指數平均
+    # ✅ 計算心情指數平均，推薦教材
     try:
         mood_scores = user_entries['心情指數'].astype(float)
         avg_score = mood_scores.mean()
@@ -39,7 +42,8 @@ async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataF
     except Exception as e:
         material_recommendation = "無法計算心情指數，未推薦教材。"
 
-    # ✅ 新 prompt，加上列點式要求
+    # 💬 2-3. 生成分析提示詞（prompt）
+    # ✅ 分析提示（列點式）
     prompt = (
         f"目前正在處理用戶 {user_id} 的日記，共 {len(user_entries)} 則。\n"
         f"日記內容（僅顯示前 5 筆）：\n{prompt_records}\n\n"
@@ -54,17 +58,48 @@ async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataF
     all_logs = []
     final_recommendation = None
 
+    # 🔄 2-4. 多回合代理互動分析
     try:
         for _ in range(6):
             for agent in agents:
                 response = await agent.act(prompt)
                 display_name = display_names.get(agent.name, agent.name)
 
+                # 處理回應訊息內容是否需要條列化
+                formatted_response = response
+
+                if "最終建議：" in response:
+                    # 抽取建議段落以列點
+                    rec = response.split("最終建議：")[-1].strip()
+                    normalized = re.sub(r'[•*]', '-', rec)
+                    points = [p.strip() for p in normalized.split('-') if p.strip()]
+                    if points:
+                        formatted_response = "最終建議：\n" + "\n".join([f"• {p}" for p in points])
+
+                # ✅ 處理含有 **1. **2. 的項目條列
+                elif re.search(r'\*\*\d+\.', response):
+                    lines = re.split(r'\*\*(\d+)\.\s*', response)
+                    # lines: ['', '1', '項目一', '2', '項目二', ...]
+                    grouped = [lines[i+2].strip() for i in range(0, len(lines)-2, 2)]
+                    if grouped:
+                        formatted_response = "\n".join([f"• {p}" for p in grouped])
+
+                elif any(bullet in response for bullet in ['- ', '* ', '• ']):
+                    lines = response.split('\n')
+                    points = []
+                    for line in lines:
+                        m = re.match(r'^[-•*]\s*(.+)', line.strip())
+                        if m:
+                            points.append(m.group(1).strip())
+                    if points:
+                        formatted_response = "\n".join([f"• {p}" for p in points])
+
                 socketio.emit('update', {
-                    'message': f"🤖 [{display_name}]：{response}",
+                    'message': f"🤖 [{display_name}]：{formatted_response}",
                     'source': agent.name,
                     'tag': 'analysis'
                 })
+
                 all_logs.append(response)
 
                 if "最終建議：" in response and final_recommendation is None:
@@ -73,7 +108,8 @@ async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataF
     except asyncio.exceptions.CancelledError:
         pass
 
-    # ✅ 輔導老師要多加選擇最適合的方法（整份日記內容）
+    # 🧩 2-5. 輔導老師專屬分析（心理治療建議）
+    # ✅ 若為輔導老師，給予建議輔導方法
     therapy_recommendation = ""
     if is_counselor:
         combined_text = "\n".join([str(r) for r in records])
@@ -90,13 +126,15 @@ async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataF
         )
         therapy_recommendation = await therapy_agent.act(therapy_prompt)
 
-    # ✅ 組合最終建議
+    # 🧾 2-6. 整理總建議並回傳前端
+    # ✅ 組合建議訊息（避免空列點）
     suggestion_message = ""
     if final_recommendation:
-        # 把條列式建議每一點換行
-        points = final_recommendation.split('-')
-        points = [p.strip() for p in points if p.strip()]
-        suggestion_message += "\n".join([f"• {p}" for p in points])
+        # 統一條列符號並拆解為清單
+        normalized_text = re.sub(r'[•*]', '-', final_recommendation)
+        points = [p.strip() for p in normalized_text.split('-') if p.strip()]
+        if points:
+            suggestion_message += "\n" + "\n".join([f"• {p}" for p in points])
 
     suggestion_message += f"\n\n📚 {material_recommendation}"
     if therapy_recommendation:
@@ -104,6 +142,7 @@ async def process_user_diary(socketio: SocketIO, user_id, user_entries: pd.DataF
 
     socketio.emit('suggestions', {'suggestions': suggestion_message})
 
+# 分析流程啟動
 async def run_multiagent_analysis(socketio: SocketIO, user_id, user_entries: pd.DataFrame, is_counselor=False):
     socketio.emit('update', {
         'message': '🤖 系統：正在啟動分析專家與 AI 教練的協作...'

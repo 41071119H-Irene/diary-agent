@@ -1,4 +1,3 @@
-import os
 from config import DEFAULT_MODEL, MODEL_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY, HF_API_KEY
 from google import genai
 import openai

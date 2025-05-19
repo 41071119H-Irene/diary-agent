@@ -136,6 +136,7 @@
 </div>
 
 <script>
+    // 1. Socket 監聽與畫面更新
     const socket = io();
 
     socket.on('plot_generated', function (data) {
@@ -199,7 +200,7 @@
     });
 
 
-
+    // 2. 檔案上傳表單處理
     $('#upload-form').submit(function (e) {
         e.preventDefault();  // ✅ 第一行就防止預設送出行為
         const formData = new FormData(); // ✅ 提早定義
@@ -233,6 +234,7 @@
         });
     });
 
+    // 3. AI 對話介面
     $('#send-button').click(function () {
         const message = $('#chat-input').val();
         if (message.trim() === '') return;
